@@ -51,6 +51,31 @@ checkEquip = false
 
 --local ItemUpgradeInfo = LibStub("LibItemUpgradeInfo-1.0")
 --local ilevel = ItemUpgradeInfo:GetUpgradedItemLevel(GetInventoryItemLink("player", GetInventorySlotInfo( "ShoulderSlot" )))
+
+local frame_HandleLoot = CreateFrame("Frame")
+frame_HandleLoot:RegisterEvent("LOOT_OPENED")
+--frame_HandleLoot:RegisterEvent("LOOT_READY")
+frame_HandleLoot:SetScript("OnEvent", function(self,event,...)
+  for i=1,GetNumLootItems() do
+     --_,name,_,rarity,_,isQuest,questID = GetLootSlotInfo(i)
+     _, _, _, _, _, _, isQuest, _, _ = GetLootSlotInfo(i)
+    if(isQuest) then
+      LootSlot(i)
+      --[[for j=0,GetNumQuestLogEntries() do
+        _,_,_,_,_,_,_,quest = GetQuestLogTitle(i)
+        if(questID == quest) do
+          LootSlot(i)
+        end
+      end
+      --]]
+    end
+    --if (rarity > 1) then
+      --LootSlot(i)
+    --end
+  end
+end)
+
+
 local scantip = CreateFrame("GameTooltip", "iLvlScanningTooltip", nil, "GameTooltipTemplate")
 
 local function _isTier(unit, slotName)
@@ -175,7 +200,6 @@ frame_HandleEquipItems:SetScript("OnEvent", function(self, event, ...)
   end
   if (event == "UNIT_INVENTORY_CHANGED") then
     if (checkEquip == true) then
-      print("equip items")
       --[[
       for _, item in ipairs(toEquip) do
         print(item)
@@ -183,7 +207,7 @@ frame_HandleEquipItems:SetScript("OnEvent", function(self, event, ...)
       end
       --]]
       for i=#toEquip,1,-1 do
-        print("Item: ",toEquip[i])
+        print("Equipping: ",toEquip[i])
         EquipItemByName(toEquip[i])
         table.remove(toEquip, i)
       end
@@ -207,7 +231,6 @@ end)
 local frame_HandleQuestProgress = CreateFrame("Frame");
 frame_HandleQuestProgress:RegisterEvent("QUEST_PROGRESS")
 frame_HandleQuestProgress:SetScript("OnEvent", function(self, event, ...)
-  print(event,"   ",type(event))
   CompleteQuest()
 end)
 
