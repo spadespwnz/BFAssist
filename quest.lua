@@ -115,19 +115,19 @@ local scantip = CreateFrame("GameTooltip", "iLvlScanningTooltip", nil, "GameTool
 local function _findMainStat()
   local mainStat = 1
   local statValue = UnitStat("player", 1)
-  local statString = "Strength"
+  local statString = "STRENGTH"
 
   stat = UnitStat("player", 2)
   if (stat > statValue) then
     mainStat = 2
     statValue = stat
-    statString = "Agility"
+    statString = "AGILITY"
   end
   stat = UnitStat("player", 4)
   if (stat > statValue) then
     mainStat = 4
     statValue = stat
-    statString = "Intellect"
+    statString = "INTELLECT"
   end
   return mainStat, statValue, statString
 end
@@ -225,11 +225,58 @@ local function _bestItemForSlot(slotName)
   return bestLvl, itemLink
 end
 
+local function equipItem(link)
+
+  itemType = select(9, GetItemInfo(link))
+  if (itemEquipLocMap[itemType] == "SecondaryHandSlot") then
+    --Check if we can create an upgrade by equipping a wep+new off
+    secondaryIlevel = _getItemLevel("player", "SecondaryHandSlot")
+    if (secondaryIlevel == nil) then --Assume ypur wearing a 2H...
+      local equipLevel = _getItemLevel("player", "MainHandSlot")
+      local newOffhandLevel = _getItemLevelLink(link)
+      local mainHandBagLevel, mainHandBagItem = _bestItemMainhand()
+      if ( ((mainhandBagLevel + newOffhandLevel)/2) > equipLevel ) then
+        EquipItemByName(link)
+        EquipItemByName(mainHandBagItem)
+      end
+    else
+      EquipItemByName(link)
+    end
+
+  elseif (itemType == "INVTYPE_WEAPON" or itemType == "INVTYPE_WEAPONMAINHAND") then
+
+    --Check if we can create an upgrade by equipping new wep+off
+    if (_getItemLevel("player", "SecondaryHandSlot") == nil) then --Assume Wearing a 2H
+
+      local offHandBagLevel, offHandBagItem = _bestItemForSlot("SecondaryHandSlot")
+
+      local newMainhandLevel = _getItemLevelLink(link)
+
+      local mainHand = GetInventoryItemLink("player", GetInventorySlotInfo( "MainHandSlot" ))
+
+      local equipLevel = 0
+      if mainHand ~= nil then --Has mainhand, check its ilevel
+         equipLevel = _getItemLevel("player", "MainHandSlot")
+      end
+      if ( ((newMainhandLevel + offHandBagLevel)/2) > equipLevel ) then
+        EquipItemByName(link)
+        EquipItemByName(offHandBagItem)
+      end
+    else
+      EquipItemByName(link)
+    end
+  else
+    EquipItemByName(link)
+  end
+end
+
+
 local f = CreateFrame("Frame", nil);
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
 f:SetScript("OnEvent", function(self, event, ...)
   --print(_getItemLevel("player", "ShoulderSlot"))
   print("BFAssist is Loaded!")
+
   --[[
   for _, slot in ipairs(tierSlots) do
     print(slot," ",_getItemLevel("player", slot))
@@ -241,7 +288,7 @@ frame_HandleCombatChange:RegisterEvent("PLAYER_REGEN_ENABLED")
 frame_HandleCombatChange:SetScript("OnEvent", function(self,event, ...)
   for i=#toEquip,1,-1 do
     print("Equipping: ",toEquip[i])
-    EquipItemByName(toEquip[i])
+    equipItem(toEquip[i])
     table.remove(toEquip, i)
   end
   equipAfterCombat = false
@@ -253,34 +300,21 @@ local frame_HandleEquipItems = CreateFrame("Frame");
 frame_HandleEquipItems:RegisterEvent("QUEST_FINISHED")
 frame_HandleEquipItems:RegisterEvent("UNIT_INVENTORY_CHANGED")
 frame_HandleEquipItems:SetScript("OnEvent", function(self, event, ...)
-  if (event == "QUEST_FINISHED") then
-    checkEquip = true
-  end
-  if (event == "UNIT_INVENTORY_CHANGED") then
-    if (checkEquip == true) then
-      --[[
-      for _, item in ipairs(toEquip) do
-        print(item)
-        EquipItemByName(item)
-      end
-      --]]
-      if #toEquip > 0 then
-        if InCombatLockdown() == true then
-          equipAfterCombat = true
-          return
-        end
-      end
-      for i=#toEquip,1,-1 do
-        print("Equipping: ",toEquip[i])
-        EquipItemByName(toEquip[i])
-        table.remove(toEquip, i)
-      end
-
-      checkEquip = false
+  if #toEquip > 0 then
+    if InCombatLockdown() == true then
+      equipAfterCombat = true
+      return
     end
   end
+  for i=#toEquip,1,-1 do
+    print("Equipping: ",toEquip[i])
+    equipItem(toEquip[i])
+    table.remove(toEquip, i)
+  end
 end)
-
+function addEquip(item)
+  table.insert(toEquip, item)
+end
 
 
 --Quest Detail, Accept Quest Page
@@ -344,11 +378,179 @@ frame_HandleGossipShow:SetScript("OnEvent", function(self, event, ...)
 end)
 
 --Turn in the quest
+
+local function _getIncreaseWeaponReward(rewardLink)
+
+  local stats = GetItemStats(itemLink)
+  _,_,mainStatString = _findMainStat()
+  if (stats["ITEM_MOD_"..mainStatString.."_SHORT"] == nil) then
+    print(rewardLink," has no main stat.")
+    return 0
+  end
+
+  local itemType = select(9,GetItemInfo(rewardLink))
+  local invItemLink = GetInventoryItemLink("player", GetInventorySlotInfo( itemEquipLocMap[itemType] ))
+  if invItemLink == nil then
+
+    --Comparing Against Empty slot (possibly upgrade for 2nd slot if using a 2H)
+    if (forceSameWeaponType == false and itemEquipLocMap[itemType] == "SecondaryHandSlot") then
+      local bestInInv = _bestItemForSlot("SecondaryHandSlot")
+      local inc = rewardLevel - bestInInv
+      print("Increase over best Secondary Slot in bag")
+      return inc
+    elseif itemEquipLocMap[itemType] == "MainHandSlot" then --Not wearing a mainhand?
+      print("Your not wearing a weapon so this is an upgrade...")
+      return _getItemLevelLink(rewardLink)
+
+    end
+  end
+  local bestInc = 0
+
+  if (itemType == "INVTYPE_2HWEAPON") then --Reward is 2H
+    equipType = select(9, GetItemInfo(invItemLink))
+    if (equipType == itemType) then --Wearing 2H Weapon
+      equipSubtype = select(7, GetItemInfo(invItemLink))
+      if (equipSubtype == itemSubtype and forceSameWeaponTypeStrict) or (forceSameWeaponTypeStrict == false) then
+        local wepOneLevel = _getItemLevelLink(invItemLink)
+        if rewardLevel > wepOneLevel then
+          bestInc = rewardLevel - wepOneLevel
+        end
+      end
+      --Check For 2nd 2H
+      secondInvItemLink = GetInventoryItemLink("player", GetInventorySlotInfo( "SecondaryHandSlot" ))
+      if (secondInvItemLink) then
+        secondEquipType = select(9, GetItemInfo(secondInvItemLink))
+        if secondEquipType == itemType then
+          secondEquipSubtype = select(7, GetItemInfo(secondInvItemLink))
+
+          if (secondEquipSubtype == itemSubtype and forceSameWeaponTypeStrict) or (forceSameWeaponTypeStrict == false) then
+            local wepTwoLevel = _getItemLevelLink(secondInvItemLink)
+            local dif = rewardLevel - wepTwoLevel
+            if dif > bestInc then
+              bestInc = dif
+            end
+          end
+        end
+      end
+    else --Wearing 1H
+
+      if (forceSameWeaponType == false) then
+
+        --Get Average Ilevel of 2 slots and compare
+        local ilvlOne = _getItemLevelLink(invItemLink)
+        local ilvlTwo = 0
+
+        secondInvItemLink = GetInventoryItemLink("player", GetInventorySlotInfo( "SecondaryHandSlot" ))
+        if (secondInvItemLink) then
+          ilvlTwo = _getItemLevelLink(secondInvItemLink)
+        end
+        local ilvl = (ilvlOne + ilvlTwo) / 2
+        if rewardLevel > ilvl then
+          bestInc = rewardLevel - ilvl
+        end
+      end
+    end
+  else --Reward is 1H
+    if (forceSameWeaponType) then
+      --Check vs Main
+
+
+      local itemToCheck = GetInventoryItemLink("player", GetInventorySlotInfo( "MainHandSlot"))
+      if itemToCheck then
+        local equipType = select(9, GetItemInfo(itemToCheck))
+        if equipType == itemType then
+
+          local equipSubtype = select(7,GetItemInfo(itemToCheck))
+          if (forceSameWeaponTypeStrict == false or equipSubtype == itemSubtype) then
+
+            local ilvl = _getItemLevelLink(itemToCheck)
+            if (rewardLevel > ilvl) then
+              bestInc = rewardLevel - ilvl
+            end
+          end
+        end
+      end
+
+      --Check vs Off
+      itemToCheck = GetInventoryItemLink("player", GetInventorySlotInfo( "SecondaryHandSlot"))
+      if itemToCheck then
+
+        local equipType = select(9, GetItemInfo(itemToCheck))
+        if equipType == itemType then
+          local equipSubtype = select(7,GetItemInfo(itemToCheck))
+          if (forceSameWeaponTypeStrict == false or equipSubtype == itemSubtype) then
+
+            local ilvl = _getItemLevelLink(itemToCheck)
+            if (rewardLevel > ilvl) then
+              local tempInc = rewardLevel - ilvl
+              if tempInc > bestInc then
+                bestInc = tempInc
+              end
+            end
+          end
+        end
+      end
+
+    else
+      --If wearing a 2H, compare against inv's best item for slot
+      --else, if secondary, compare against secondary
+      --else, if primary, compare against primary and secondary is same type
+      local itemToCheck = GetInventoryItemLink("player", GetInventorySlotInfo( "MainHandSlot"))
+      if itemToCheck then
+        local equipType = select(9, GetItemInfo(itemToCheck))
+        if (equipType == "INVTYPE_2HWEAPON") then --Wearing a 2H
+          local ilvl = 0
+          if (itemEquipLocMap[itemType] == "MainHandSlot") then
+            ilvl = _bestItemMainhand()
+          else
+            ilvl = _bestItemForSlot("SecondaryHandSlot")
+          end
+          if rewardLevel - ilvl > 0 then
+            bestInc = rewardLevel - ilvl
+          end
+        else --Not wearing a 2H
+          if itemEquipLocMap[itemType] == "SecondaryHandSlot" then --Reward is 2ndary
+            local ilvl = _getItemLevelLink(invItemLink)
+            if (rewardLevel > ilvl) then
+              local tempInc = rewardLevel - ilvl
+              if tempInc > bestInc then
+                bestInc = tempInc
+              end
+            end
+          else --Reward is 1Handed primary
+
+            local ilvl = _getItemLevelLink(invItemLink)
+            if (rewardLevel > ilvl) then
+              local tempInc = rewardLevel - ilvl
+              if tempInc > bestInc then
+                bestInc = tempInc
+              end
+            end
+
+            local secondaryItem = GetInventoryItemLink("player", GetInventorySlotInfo( "SecondaryHandSlot"))
+            if (secondaryItem) then
+
+              local ilvl = _getItemLevelLink(secondaryItem)
+              if (rewardLevel > ilvl) then
+                local tempInc = rewardLevel - ilvl
+                if tempInc > bestInc then
+                  bestInc = tempInc
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return bestInc
+end
+
+
 local frame_HandleQuestComplete = CreateFrame("Frame");
 frame_HandleQuestComplete:RegisterEvent("QUEST_COMPLETE")
 frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
   questOptions = GetNumQuestChoices()
-
   if questOptions == 0 then
     GetQuestReward(itemChoice);
   else
@@ -368,226 +570,56 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
       if (itemEquipLocMap[itemType] == "SecondaryHandSlot" or itemEquipLocMap[itemType] == "MainHandSlot") then
         isWeapon = true
       end
-      --Check Weapon Stuff First
-      if invItemLink then
-        if isWeapon then
 
-          --Add check for main stat
-          continueCheck = false
-          local bestInc = 0
-          if (itemType == "INVTYPE_2HWEAPON") then
-            equipType = select(9, GetItemInfo(invItemLink))
-            if (equipType == itemType) then
-              equipSubtype = select(7, GetItemInfo(invItemLink))
-              if (equipSubtype == itemSubtype and forceSameWeaponTypeStrict) or (forceSameWeaponTypeStrict == false) then
-                local wepOneLevel = _getItemLevelLink(invItemLink)
-                print("wepOneLevel: ",wepOneLevel)
-                if rewardLevel > wepOneLevel then
-                  bestInc = rewardLevel - wepOneLevel
-                end
-              end
 
-              --Check For 2nd 2H
-              secondInvItemLink = GetInventoryItemLink("player", GetInventorySlotInfo( "SecondaryHandSlot" ))
-              if (secondInvItemLink) then
-                secondEquipType = select(9, GetItemInfo(secondInvItemLink))
-                if secondEquipType == itemType then
-                  secondEquipSubtype = select(7, GetItemInfo(secondInvItemLink))
-
-                  if (secondEquipSubtype == itemSubtype and forceSameWeaponTypeStrict) or (forceSameWeaponTypeStrict == false) then
-                    local wepTwoLevel = _getItemLevelLink(secondInvItemLink)
-                    local dif = rewardLevel - wepTwoLevel
-                    if dif > bestInc then
-                      bestInc = dif
-                    end
-                  end
-                end
-              end
-            else
-              --Not Wearing a 2H
-
-              if (forceSameWeaponType == false) then
-                --Get Average Ilevel of 2 slots and compare
-                local ilvlOne = _getItemLevelLink(invItemLink)
-                local ilvlTwo = 0
-
-                secondInvItemLink = GetInventoryItemLink("player", GetInventorySlotInfo( "SecondaryHandSlot" ))
-                if (secondInvItemLink) then
-                  ilvlTwo = _getItemLevelLink(secondInvItemLink)
-                end
-                local ilvl = (ilvlOne + ilvlTwo) / 2
-                if rewardLevel > ilvl then
-                  bestInc = rewardLevel - ilvl
-                end
-              end
-            end
-          else
-            if (forceSameWeaponType) then
-              --Check vs Main
-              local itemToCheck = GetInventoryItemLink("player", GetInventorySlotInfo( "MainHandSlot"))
-              if itemToCheck then
-                local equipType = select(9, GetItemInfo(itemToCheck))
-                if equipType == itemType then
-                  local equipSubtype = select(7,GetItemInfo(itemToCheck))
-                  if (forceSameWeaponTypeStrict == false or equipSubtype == itemSubtype) then
-                    local ilvl = _getItemLevelLink(itemToCheck)
-                    if (rewardLevel < ilvl) then
-                      bestInc = rewardLevel - ilvl
-                    end
-                  end
-                end
-              end
-
-              --Check vs Off
-              itemToCheck = GetInventoryItemLink("player", GetInventorySlotInfo( "SecondaryHandSlot"))
-              if itemToCheck then
-                local equipType = select(9, GetItemInfo(itemToCheck))
-                if equipType == itemType then
-                  local equipSubtype = select(7,GetItemInfo(itemToCheck))
-                  if (forceSameWeaponTypeStrict == false or equipSubtype == itemSubtype) then
-                    local ilvl = _getItemLevelLink(itemToCheck)
-                    if (rewardLevel < ilvl) then
-
-                      local tempInc = rewardLevel - ilvl
-                      if tempInc > bestInc then
-                        bestInc = tempInc
-                      end
-                    end
-                  end
-                end
-              end
-
-            else
-              --If wearing a 2H, compare against inv's best item for slot
-              --else, if secondary, compare against secondary
-              --else, if primary, compare against primary and secondary is same type
-              local itemToCheck = GetInventoryItemLink("player", GetInventorySlotInfo( "MainHandSlot"))
-              if itemToCheck then
-                local equipType = select(9, GetItemInfo(itemToCheck))
-                if (equipType == "INVTYPE_2HWEAPON") then
-                  local ilvl = 0
-                  if (itemEquipLocMap[itemType] == "MainHandSlot") then
-                    ilvl = _bestItemMainhand()
-                  else
-                    ilvl = _bestItemForSlot("SecondaryHandSlot")
-                  end
-                  if rewardLevel - ilvl > 0 then
-                    bestInc = rewardLevel - ilvl
-                  end
-                else
-                  if itemEquipLocMap[itemType] == "SecondaryHandSlot" then
-                    local ilvl = _getItemLevelLink(invItemLink)
-                    if (rewardLevel > ilvl) then
-                      local tempInc = rewardLevel - ilvl
-                      if tempInc > bestInc then
-                        bestInc = tempInc
-                      end
-                    end
-                  else
-                    local ilvl = _getItemLevelLink(invItemLink)
-                    if (rewardLevel > ilvl) then
-                      local tempInc = rewardLevel - ilvl
-                      if tempInc > bestInc then
-                        bestInc = tempInc
-                      end
-                    end
-
-                    local secondaryItem = GetInventoryItemLink("player", GetInventorySlotInfo( "SecondaryHandSlot"))
-                    if (secondItem) then
-                      local ilvl = _getItemLevelLink(secondaryItem)
-                      if (rewardLevel > ilvl) then
-                        local tempInc = rewardLevel - ilvl
-                        if tempInc > bestInc then
-                          bestInc = tempInc
-                        end
-                      end
-                    end
-                  end
-                end
-              end
-            end
-          end
-          print("Increase form",i,": ",bestInc)
-          if bestInc > bestIncrease then
-            print("New Best Option, Weapon: ",i)
-
-            bestIncrease = bestInc
-            bestOption = i
-          end
-        end
-      else
-        if (forceSameWeaponType == false and itemEquipLocMap[itemType] == "SecondaryHandSlot") then
-          local bestInInv = _bestItemForSlot("SecondaryHandSlot")
-          local inc = rewardLevel - bestInInv
-          if inc > bestIncrease then
-            print("New Best Option, Missing Secondary: ",i)
-            bestIncrease = inc
-            bestOption = i
-          end
-        end
+      if isWeapon then
         continueCheck = false
+        itemInc = _getIncreaseWeaponReward(itemLink)
+        if itemInc > bestIncrease then
+          bestOption = i
+          bestIncrease = itemInc
+        end
       end
-
-
 
       if continueCheck then
         --invLevel = select(4, GetItemInfo(invItemLink))
         invLevel = _getItemLevel("player", itemEquipLocMap[itemType])
-        print("-----Checking Reward ",i,"------")
-        print("Reward Ilevel: ",rewardLevel)
-        print("Equipped Level: ",invLevel)
         isTier = _isTier("player", itemEquipLocMap[itemType])
 
         if (isTier) == 1 then
-          print("Equipped Item is Teir")
           tierCount = _getTierCount()
           if (tierCount == 4 or tierCount == 2) then
             --Find Best Item For Slot In Bag
             bestLevelInBag = _bestItemForSlot(itemEquipLocMap[itemType])
-            print("Best Item In Bag for Slot: ", bestLevelInBag)
             if (bestLevelInBag > invLevel) then
               invLevel = bestLevelInBag
-              print("Bag Piece is better, Checking Against: ",invLevel)
             end
-          else
-            print("Odd Number Of Teir, Skipping Bag Checks")
           end
         end
 
         if itemType == "INVTYPE_FINGER" then
-          print("Reward is Finger, Must Check Both")
           otherInvLevel = _getItemLevel("player",  itemEquipLocMap["INVTYPE_FINGER_1"] )
-          print("2nd Finger: ",otherInvLevel)
           if otherInvLevel < invLevel then
             invLevel = otherInvLevel
-            print("2nd Finger Is Better")
           end
         end
 
         if itemType == "INVTYPE_TRINKET" then
-          print("Reward is Trinket, Must Check Both")
           otherInvLevel = _getItemLevel("player",  itemEquipLocMap["INVTYPE_TRINKET_1"] )
-          print("2nd Trinket: ",otherInvLevel)
           if otherInvLevel < invLevel then
             invLevel = otherInvLevel
-          print("2nd Trinket Is Better")
           end
         end
 
 
         dif = rewardLevel - invLevel
-        print("Reward: ",rewardLevel, " vs: ",invLevel," Dif: ",dif)
-        print("Previous Best: ",bestIncrease)
         if rewardLevel - invLevel > bestIncrease then
           bestOption = i
           bestIncrease = rewardLevel - invLevel
           print("New Best: ",bestIncrease)
-        else
-          print("Previous Option Was Better")
         end
       end
     end
-    print("Best Option: ",bestOption)
 
     itemLink = GetQuestItemLink("choice", bestOption)
     itemType = select(9,GetItemInfo(itemLink))
@@ -596,7 +628,7 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
     isTier = _isTier("player", itemEquipLocMap[itemType])
     if (bestIncrease == 0) then
       print("Item is not an upgrade")
-      --GetQuestReward(bestOption)
+      GetQuestReward(bestOption)
       return
     end
     --[[
@@ -639,7 +671,7 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
           --EquipItemByName(secondItem)
         end
       end
-      --GetQuestReward(bestOption)
+      GetQuestReward(bestOption)
       return
     end
     isWeapon = false
@@ -648,13 +680,13 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
     end
 
     if (isWeapon) then
-      print("Equipping to Weapon Slot")
-      print("Need code to equip weapon stuff still")
+      table.insert(toEquip, itemLink)
+      GetQuestReward(bestOption)
       return
     end
     table.insert(toEquip, itemLink)
 
-    --GetQuestReward(bestOption)
+    GetQuestReward(bestOption)
 
     --EquipItemByName(itemLink)
   end
