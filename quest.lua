@@ -1,3 +1,8 @@
+--Multiple Quests from same NPC, 1st not complete, others are
+--Add equipped Items to a list to check on next inventory update, just incase they failed to equip
+
+
+
 --[[
 local mapOverlay = CreateFrame("Frame", "MapOverlay",WorldMapFrame)
 mapOverlay:SetFrameLevel(100)
@@ -50,6 +55,7 @@ forceSameWeaponTypeStrict = false
 toEquip = {}
 checkEquip = false
 equipAfterCombat = false
+local checkGearChange = false
 --/run print(select(1,GetDetailedItemLevelInfo(GetInventoryItemLink("player", GetInventorySlotInfo( "ShoulderSlot" )))))
 --/run print(select(4,GetItemInfo(GetInventoryItemLink("player", GetInventorySlotInfo( "ShoulderSlot" )))))
 
@@ -294,24 +300,46 @@ frame_HandleCombatChange:SetScript("OnEvent", function(self,event, ...)
   equipAfterCombat = false
 end)
 
+local frame_HandleEquipChange = CreateFrame("Frame")
+frame_HandleEquipChange:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+frame_HandleEquipChange:SetScript("OnEvent", function(self, event, ...)
 
+end)
 
 local frame_HandleEquipItems = CreateFrame("Frame");
-frame_HandleEquipItems:RegisterEvent("QUEST_FINISHED")
-frame_HandleEquipItems:RegisterEvent("UNIT_INVENTORY_CHANGED")
+--frame_HandleEquipItems:RegisterEvent("UNIT_INVENTORY_CHANGED")
 frame_HandleEquipItems:SetScript("OnEvent", function(self, event, ...)
   if #toEquip > 0 then
     if InCombatLockdown() == true then
       equipAfterCombat = true
       return
+    else
+
+      for i=#toEquip,1,-1 do
+        print("Equipping: ",toEquip[i])
+        checkGearChange = true
+        equipItem(toEquip[i])
+        --table.remove(toEquip, i)
+      end
     end
   end
-  for i=#toEquip,1,-1 do
-    print("Equipping: ",toEquip[i])
-    equipItem(toEquip[i])
-    table.remove(toEquip, i)
-  end
 end)
+local function tryEquipItems()
+  if #toEquip > 0 then
+    if InCombatLockdown() == true then
+      equipAfterCombat = true
+      return
+    else
+
+      for i=#toEquip,1,-1 do
+        print("Equipping: ",toEquip[i])
+        --checkGearChange = true
+        equipItem(toEquip[i])
+        table.remove(toEquip, i)
+      end
+    end
+  end
+end
 function addEquip(item)
   table.insert(toEquip, item)
 end
@@ -337,12 +365,26 @@ end)
 local frame_HandleQuestGreeting = CreateFrame("Frame");
 frame_HandleQuestGreeting:RegisterEvent("QUEST_GREETING")
 frame_HandleQuestGreeting:SetScript("OnEvent", function(self, event, ...)
-  print(GetNumQuestChoices())
+  availCount = GetNumAvailableQuests();
+  if availCount > 0 then
+    SelectAvailableQuest(1)
+    return
+  end
+
+  active = GetNumActiveQuests()
+  for i=1,active,1 do
+    title,completed = GetActiveTitle(i)
+    if completed == true then
+      SelectActiveQuest(i)
+      return
+    end
+  end
 end)
 
 
 local frame_HandleGossipShow = CreateFrame("Frame");
 frame_HandleGossipShow:RegisterEvent("GOSSIP_SHOW")
+
 frame_HandleGossipShow:SetScript("OnEvent", function(self, event, ...)
   --Accept All Quests
   availCount = GetNumGossipAvailableQuests();
@@ -357,13 +399,16 @@ frame_HandleGossipShow:SetScript("OnEvent", function(self, event, ...)
   if one == true then
     SelectGossipActiveQuest(1)
     return
-  elseif two == true then
+  end
+  if two == true then
     SelectGossipActiveQuest(2)
     return
-  elseif three == true then
+  end
+  if three == true then
     SelectGossipActiveQuest(3)
     return
-  elseif four == true then
+  end
+  if four == true then
     SelectGossipActiveQuest(4)
     return
   end
@@ -571,7 +616,6 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
         isWeapon = true
       end
 
-
       if isWeapon then
         continueCheck = false
         itemInc = _getIncreaseWeaponReward(itemLink)
@@ -627,10 +671,12 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
 
     isTier = _isTier("player", itemEquipLocMap[itemType])
     if (bestIncrease == 0) then
-      print("Item is not an upgrade")
+      print("No Upgrades")
       GetQuestReward(bestOption)
       return
     end
+
+    print("Best Upgrade:",itemLink)
     --[[
     if (itemEquipLocMap[itemType] == "MainHandSlot" or itemEquipLocMap[itemType] == "SecondaryHandSlot" ) then
       print("Not Equipping Weapon")
@@ -639,7 +685,6 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
     end
     --]]
     if (isTier == 1) then
-      print("Check To Replace Tier")
       --Check Inventory To Replace Tier
       firstItem = itemLink
       firstSlot = itemEquipLocMap[itemType]
@@ -667,11 +712,13 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
           print("Replacing 2 tier peices.")
           table.insert(toEquip, firstItem)
           table.insert(toEquip, secondItem)
+          print("Equipping: ",firstItem," and ",secondItem)
           --EquipItemByName(firstItem)
           --EquipItemByName(secondItem)
         end
       end
       GetQuestReward(bestOption)
+      C_Timer.After(1, tryEquipItems);
       return
     end
     isWeapon = false
@@ -680,14 +727,17 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
     end
 
     if (isWeapon) then
+      print("Probably equipping: ",itemLink)
       table.insert(toEquip, itemLink)
       GetQuestReward(bestOption)
+      C_Timer.After(1, tryEquipItems);
       return
     end
+    print("Equipping: ",itemLink)
     table.insert(toEquip, itemLink)
 
     GetQuestReward(bestOption)
-
+    C_Timer.After(1, tryEquipItems);
     --EquipItemByName(itemLink)
   end
 end)
