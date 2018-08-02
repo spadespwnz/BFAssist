@@ -1,8 +1,3 @@
---Multiple Quests from same NPC, 1st not complete, others are
---Add equipped Items to a list to check on next inventory update, just incase they failed to equip
-
-
-
 --[[
 local mapOverlay = CreateFrame("Frame", "MapOverlay",WorldMapFrame)
 mapOverlay:SetFrameLevel(100)
