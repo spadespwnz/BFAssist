@@ -46,10 +46,12 @@ tierSlots = {"HeadSlot","ChestSlot","ShoulderSlot","LegsSlot", "BackSlot","Hands
 replaceTierIncrease = 50
 forceSameWeaponType = false
 forceSameWeaponTypeStrict = false
-
-toEquip = {}
-checkEquip = false
-equipAfterCombat = false
+bfaOn = true
+turnIn = true
+local toEquip = {}
+local backupEquip = {}
+local checkEquip = false
+local equipAfterCombat = false
 local checkGearChange = false
 --/run print(select(1,GetDetailedItemLevelInfo(GetInventoryItemLink("player", GetInventorySlotInfo( "ShoulderSlot" )))))
 --/run print(select(4,GetItemInfo(GetInventoryItemLink("player", GetInventorySlotInfo( "ShoulderSlot" )))))
@@ -57,28 +59,7 @@ local checkGearChange = false
 --local ItemUpgradeInfo = LibStub("LibItemUpgradeInfo-1.0")
 --local ilevel = ItemUpgradeInfo:GetUpgradedItemLevel(GetInventoryItemLink("player", GetInventorySlotInfo( "ShoulderSlot" )))
 
-local frame_HandleLoot = CreateFrame("Frame")
-frame_HandleLoot:RegisterEvent("LOOT_OPENED")
---frame_HandleLoot:RegisterEvent("LOOT_READY")
-frame_HandleLoot:SetScript("OnEvent", function(self,event,...)
-  for i=1,GetNumLootItems() do
-     --_,name,_,rarity,_,isQuest,questID = GetLootSlotInfo(i)
-     _, _, _, _, _, _, isQuest, _, _ = GetLootSlotInfo(i)
-    if(isQuest) then
-      LootSlot(i)
-      --[[for j=0,GetNumQuestLogEntries() do
-        _,_,_,_,_,_,_,quest = GetQuestLogTitle(i)
-        if(questID == quest) do
-          LootSlot(i)
-        end
-      end
-      --]]
-    end
-    --if (rarity > 1) then
-      --LootSlot(i)
-    --end
-  end
-end)
+
 
 
 local scantip = CreateFrame("GameTooltip", "iLvlScanningTooltip", nil, "GameTooltipTemplate")
@@ -112,6 +93,8 @@ for k,v in pairs(itemEquipLocMap) do
 end
 --]]
 
+--Auto Loot quest items
+
 local scantip = CreateFrame("GameTooltip", "iLvlScanningTooltip", nil, "GameTooltipTemplate")
 local function _findMainStat()
   local mainStat = 1
@@ -133,6 +116,21 @@ local function _findMainStat()
   return mainStat, statValue, statString
 end
 
+
+local function _isAzerite(link)
+  azerite = false
+  scantip:SetOwner(UIParent, "ANCHOR_NONE")
+  item = scantip:SetHyperlink(link)
+  for i = 2, scantip:NumLines() do
+    local text = _G["iLvlScanningTooltipTextLeft"..i]:GetText()
+    if text and text ~= "" then
+	    if string.find(text, ITEM_AZERITE_EMPOWERED_VIEWABLE) then
+        return true
+      end
+  	end
+  end
+  return false
+end
 local function _getItemLevelLink(link)
   scantip:SetOwner(UIParent, "ANCHOR_NONE")
   item = scantip:SetHyperlink(link)
@@ -272,11 +270,18 @@ local function equipItem(link)
 end
 
 
+
 local f = CreateFrame("Frame", nil);
-f:RegisterEvent("PLAYER_ENTERING_WORLD")
-f:SetScript("OnEvent", function(self, event, ...)
-  --print(_getItemLevel("player", "ShoulderSlot"))
-  print("BFAssist is Loaded!")
+f:RegisterEvent("ADDON_LOADED")
+f:SetScript("OnEvent", function(self, event, arg1)
+  if arg1 == "BFAssist" then
+    print("BFAssist is Loaded!")
+
+    if bfaOn == false then
+      print("BFAssist is off, type '/bfa on' to enable")
+      _turnOff()
+    end
+  end
 
   --[[
   for _, slot in ipairs(tierSlots) do
@@ -284,6 +289,19 @@ f:SetScript("OnEvent", function(self, event, ...)
   end
   ]]--
 end)
+
+
+local frame_HandleLoot = CreateFrame("Frame")
+frame_HandleLoot:RegisterEvent("LOOT_OPENED")
+frame_HandleLoot:SetScript("OnEvent", function(self,event,...)
+  for i=1,GetNumLootItems() do
+     _, _, _, _, _, _, isQuest, _, _ = GetLootSlotInfo(i)
+    if(isQuest) then
+      LootSlot(i)
+    end
+  end
+end)
+
 local frame_HandleCombatChange = CreateFrame("Frame");
 frame_HandleCombatChange:RegisterEvent("PLAYER_REGEN_ENABLED")
 frame_HandleCombatChange:SetScript("OnEvent", function(self,event, ...)
@@ -319,6 +337,14 @@ frame_HandleEquipItems:SetScript("OnEvent", function(self, event, ...)
     end
   end
 end)
+
+--Called 5 seconds after quest is done, redundant equip attempt incase first failed
+local function _equipItemList()
+  for i=#backupEquip,1,-1 do
+    equipItem(backupEquip[i])
+  end
+end
+
 local function tryEquipItems()
   if #toEquip > 0 then
     if InCombatLockdown() == true then
@@ -592,7 +618,9 @@ frame_HandleQuestComplete:RegisterEvent("QUEST_COMPLETE")
 frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
   questOptions = GetNumQuestChoices()
   if questOptions == 0 then
-    GetQuestReward(itemChoice);
+    if (turnIn == true) then
+      GetQuestReward(itemChoice);
+    end
   else
     bestIncrease = 0
     bestOption = 1
@@ -600,7 +628,9 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
       local continueCheck = true
       name, _,_,_,_ = GetQuestItemInfo("choice", i)
       itemLink = GetQuestItemLink("choice", i)
-      --rewardLevel = select(4,GetItemInfo(itemLink))
+      if (_isAzerite(itemLink)) then
+        return
+      end
       rewardLevel = _getItemLevelLink(itemLink)
       itemType = select(9,GetItemInfo(itemLink))
       itemSubtype = select(7,GetItemInfo(itemLink))
@@ -667,7 +697,9 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
     isTier = _isTier("player", itemEquipLocMap[itemType])
     if (bestIncrease == 0) then
       print("No Upgrades")
-      GetQuestReward(bestOption)
+      if (turnIn == true) then
+        GetQuestReward(bestOption)
+      end
       return
     end
 
@@ -707,13 +739,17 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
           print("Replacing 2 tier peices.")
           table.insert(toEquip, firstItem)
           table.insert(toEquip, secondItem)
+          backupEquip = {table.unpack(toEquip)}
           print("Equipping: ",firstItem," and ",secondItem)
           --EquipItemByName(firstItem)
           --EquipItemByName(secondItem)
         end
       end
-      GetQuestReward(bestOption)
+      if (turnIn == true) then
+        GetQuestReward(bestOption)
+      end
       C_Timer.After(1, tryEquipItems);
+      C_Timer.After(5, _equipItemList); --Redundant attempt again
       return
     end
     isWeapon = false
@@ -724,15 +760,46 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
     if (isWeapon) then
       print("Probably equipping: ",itemLink)
       table.insert(toEquip, itemLink)
-      GetQuestReward(bestOption)
+      backupEquip = {table.unpack(toEquip)}
+      if (turnIn == true) then
+        GetQuestReward(bestOption)
+      end
       C_Timer.After(1, tryEquipItems);
+      C_Timer.After(5, _equipItemList); --Redundant attempt again
       return
     end
     print("Equipping: ",itemLink)
     table.insert(toEquip, itemLink)
-
-    GetQuestReward(bestOption)
+    backupEquip = {table.unpack(toEquip)}
+    if (turnIn == true) then
+      GetQuestReward(bestOption)
+    end
     C_Timer.After(1, tryEquipItems);
+    C_Timer.After(5, _equipItemList); --Redundant attempt again
     --EquipItemByName(itemLink)
   end
 end)
+
+function _turnOn()
+  print("Turning BFAssist on")
+  frame_HandleQuestComplete:RegisterEvent("QUEST_COMPLETE")
+  frame_HandleGossipShow:RegisterEvent("GOSSIP_SHOW")
+  frame_HandleQuestGreeting:RegisterEvent("QUEST_GREETING")
+  frame_HandleQuestProgress:RegisterEvent("QUEST_PROGRESS")
+  frame_HandleQuestDetail:RegisterEvent("QUEST_DETAIL")
+  frame_HandleEquipChange:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+  frame_HandleCombatChange:RegisterEvent("PLAYER_REGEN_ENABLED")
+  frame_HandleLoot:RegisterEvent("LOOT_OPENED")
+end
+
+function _turnOff()
+  print("Turning BFAssist off")
+  frame_HandleQuestComplete:UnregisterEvent("QUEST_COMPLETE")
+  frame_HandleGossipShow:UnregisterEvent("GOSSIP_SHOW")
+  frame_HandleQuestGreeting:UnregisterEvent("QUEST_GREETING")
+  frame_HandleQuestProgress:UnregisterEvent("QUEST_PROGRESS")
+  frame_HandleQuestDetail:UnregisterEvent("QUEST_DETAIL")
+  frame_HandleEquipChange:UnregisterEvent("PLAYER_EQUIPMENT_CHANGED")
+  frame_HandleCombatChange:UnregisterEvent("PLAYER_REGEN_ENABLED")
+  frame_HandleLoot:UnregisterEvent("LOOT_OPENED")
+end

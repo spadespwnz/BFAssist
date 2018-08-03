@@ -2,7 +2,7 @@
 ## Title: BFAssist
 ## Author: SPaDeS
 ## Version: 0.1
-##SavedVariablesPerCharacter: replaceTierIncrease, forceSameWeaponType, forceSameWeaponTypeStrict
+##SavedVariablesPerCharacter: replaceTierIncrease, forceSameWeaponType, forceSameWeaponTypeStrict, bfaOn
 
 Libs\LibItemUpgradeInfo-1.0\LibItemUpgradeInfo-1.0.xml
 quest.lua
