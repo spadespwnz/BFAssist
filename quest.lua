@@ -53,6 +53,7 @@ local backupEquip = {}
 local checkEquip = false
 local equipAfterCombat = false
 local checkGearChange = false
+local questBarId = nil
 --/run print(select(1,GetDetailedItemLevelInfo(GetInventoryItemLink("player", GetInventorySlotInfo( "ShoulderSlot" )))))
 --/run print(select(4,GetItemInfo(GetInventoryItemLink("player", GetInventorySlotInfo( "ShoulderSlot" )))))
 
@@ -116,6 +117,20 @@ local function _findMainStat()
   return mainStat, statValue, statString
 end
 
+--Only works on english version, too lazy to find _G index of Use: text
+local function _isUseItem(link)
+  scantip:SetOwner(UIParent, "ANCHOR_NONE")
+  item = scantip:SetHyperlink(link)
+  for i = 2, scantip:NumLines() do
+    local text = _G["iLvlScanningTooltipTextLeft"..i]:GetText()
+    if text and text ~= "" then
+	    if string.find(text, "Use:") then
+        return true
+      end
+  	end
+  end
+  return false
+end
 
 local function _isAzerite(link)
   azerite = false
@@ -224,6 +239,44 @@ local function _bestItemForSlot(slotName)
   return bestLvl, itemLink
 end
 
+local function _clearQuestItemSlots()
+  ClearCursor()
+  for i=1,12 do
+    PickupAction(12*(questBarId-1)+i)
+    ClearCursor()
+  end
+end
+local function _addItemToBarSlot(bag,bagSlot,barSlot)
+  ClearCursor()
+  barSlot = (questBarId-1)*12+(barSlot+1)
+  PickupContainerItem(bag,bagSlot)
+  PickupAction(barSlot)
+end
+local function _searchBagsForQuestItems()
+  if (questBarId == nil) then
+    return
+  end
+  local questItemCount = 0
+  _clearQuestItemSlots()
+  local questItems = {}
+  for bag = 0,4 do
+    for slot = 1, GetContainerNumSlots(bag) do
+      local item = GetContainerItemLink(bag,slot)
+      if item then
+        iType = select(6, GetItemInfo(item))
+        if iType == "Quest" then
+          name = select(1, GetItemInfo(item))
+          if (_isUseItem(item)) then
+            print(name)
+            _addItemToBarSlot(bag,slot,questItemCount)
+            questItemCount = questItemCount+1
+          end
+        end
+      end
+    end
+  end
+end
+
 local function equipItem(link)
 
   itemType = select(9, GetItemInfo(link))
@@ -270,6 +323,31 @@ local function equipItem(link)
 end
 
 
+local function _isBarFree(bar)
+  for slot=1,12 do
+    local actionTex = GetActionTexture((bar-1)*12+slot)
+    if actionTex then
+      local global_id = select(2,GetActionInfo((bar-1)*12+slot))
+      local type = select(1,GetActionInfo((bar-1)*12+slot))
+      if type ~= "item" then
+        local spellName = GetSpellInfo(global_id)
+        return false,  spellName
+      end
+    end
+  end
+  return true, nil
+end
+local function _findEmptyActionBar()
+  for bar=1,10 do
+    local free, text = _isBarFree(bar)
+    if free == true then
+      print("Using Bar: ",bar)
+      return bar
+    end
+  end
+  return nil
+end
+
 
 local f = CreateFrame("Frame", nil);
 f:RegisterEvent("ADDON_LOADED")
@@ -277,6 +355,11 @@ f:SetScript("OnEvent", function(self, event, arg1)
   if arg1 == "BFAssist" then
     print("BFAssist is Loaded!")
 
+    questBarId = _findEmptyActionBar()
+    if questBarId == nil then
+      print("No Free Bar for Quest Items :()")
+    end
+    _searchBagsForQuestItems()
     if bfaOn == false then
       print("BFAssist is off, type '/bfa on' to enable")
       _turnOff()
@@ -289,6 +372,41 @@ f:SetScript("OnEvent", function(self, event, arg1)
   end
   ]]--
 end)
+
+
+local barUpdateQueued = false
+local lastLootTime = nil
+
+local function _updateQuestItemBar()
+  barUpdateQueued = false
+  print("Updating bars")
+  _searchBagsForQuestItems()
+end
+
+
+
+local frame_HandleItemPush = CreateFrame("Frame")
+frame_HandleItemPush:RegisterEvent("ITEM_PUSH")
+frame_HandleItemPush:SetScript("OnEvent", function(self,event,...)
+  lastLootTime = GetTime()
+end)
+
+local frame_HandleQuestAccepted = CreateFrame("Frame")
+frame_HandleQuestAccepted:RegisterEvent("QUEST_ACCEPTED")
+frame_HandleQuestAccepted:SetScript("OnEvent", function(self,event,...)
+  local time = GetTime()
+  if lastLootTime == nil then
+    return
+  end
+  if time - lastLootTime < 2 then
+
+    if barUpdateQueued == false then
+      barUpdateQueued = true
+      C_Timer.After(3, _updateQuestItemBar)
+    end
+  end
+end)
+
 
 
 local frame_HandleLoot = CreateFrame("Frame")
@@ -416,7 +534,8 @@ frame_HandleGossipShow:SetScript("OnEvent", function(self, event, ...)
 
   --Turn In Completed Quests
   active = GetNumGossipActiveQuests()
-  _,_,_,one,_,_,_,two,_,_,_,three,_,_,_,four = GetGossipActiveQuests()
+  _,_,_,one,_,_,_,_,_,two,_,_,_,_,_,three,_,_,_,_,_,four,_,_ = GetGossipActiveQuests()
+
   if one == true then
     SelectGossipActiveQuest(1)
     return
