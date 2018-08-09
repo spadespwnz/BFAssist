@@ -38,6 +38,14 @@ local function MsgCommands(msg, editbox)
     replaceTierIncrease = val
     print("replaceTierIncrease:",val)
   end
+  if (cmd == "keepSetLego") then
+    if (val == 0) then
+      keepSetsLegosTill115 = false
+    elseif (val == 1) then
+      keepSetsLegosTill115 = true
+    end
+    print("keepSetsLegosTill115:",keepSetsLegosTill115)
+  end
   if (cmd == "on") then
     _turnOn()
     bfaOn = true
@@ -66,6 +74,7 @@ local function MsgCommands(msg, editbox)
     print("'/bfa opts' to print options.")
     print("'/bfa sameWepType [1,0]' without bracket to set wether or not to force the same weapon type, I.E. using a 2 Hander")
     print("'/bfa sameWepTypeStrict [1,0]' without bracket to set wether or not to force exact weapon type, I.E. daggers")
+    print("'/bfa keepSetLego [1,0]' without bracket to set wether or not legos/sets are force equipped until 116")
     print("'/bfa [on,off]' to enable/disable")
   end
 

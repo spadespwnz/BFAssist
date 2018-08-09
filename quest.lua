@@ -43,11 +43,13 @@ itemEquipLocMap["INVTYPE_HOLDABLE"]	=	"SecondaryHandSlot"
 tierSlots = {"HeadSlot","ChestSlot","ShoulderSlot","LegsSlot", "BackSlot","HandsSlot"}
 
 --Options, Must make persistant
+keepSetsLegosTill115 = false
 replaceTierIncrease = 50
 forceSameWeaponType = false
 forceSameWeaponTypeStrict = false
 bfaOn = true
 turnIn = true
+questBar = false
 local toEquip = {}
 local backupEquip = {}
 local checkEquip = false
@@ -64,6 +66,33 @@ local questBarId = nil
 
 
 local scantip = CreateFrame("GameTooltip", "iLvlScanningTooltip", nil, "GameTooltipTemplate")
+
+local function _isLego(slotName)
+  worked, _,_,rarity = pcall(GetItemInfo,GetInventoryItemLink("player", GetInventorySlotInfo( slotName )))
+  if worked then
+    if rarity == 5 then
+      return true
+    else
+      return false
+    end
+  else
+    return false
+  end
+end
+
+local function _isArtifact(slotName)
+  worked, _,_,rarity = pcall(GetItemInfo,GetInventoryItemLink("player", GetInventorySlotInfo( slotName )))
+  if worked then
+    if rarity == 6 then
+      return true
+    else
+      return false
+    end
+  else
+    return false
+  end
+end
+
 
 local function _isTier(unit, slotName)
   worked, _,_,_,_,_, _,_,_,_,_, _,_,_,_,_, setId = pcall(GetItemInfo,GetInventoryItemLink("player", GetInventorySlotInfo( slotName )))
@@ -239,6 +268,8 @@ local function _bestItemForSlot(slotName)
   return bestLvl, itemLink
 end
 
+
+--Quest Bar Functions
 local function _clearQuestItemSlots()
   ClearCursor()
   for i=1,12 do
@@ -276,10 +307,48 @@ local function _searchBagsForQuestItems()
     end
   end
 end
+local function _isBarFree(bar)
+  for slot=1,12 do
+    local actionTex = GetActionTexture((bar-1)*12+slot)
+    if actionTex then
+      local global_id = select(2,GetActionInfo((bar-1)*12+slot))
+      local type = select(1,GetActionInfo((bar-1)*12+slot))
+      if type ~= "item" then
+        local spellName = GetSpellInfo(global_id)
+        return false,  spellName
+      end
+    end
+  end
+  return true, nil
+end
+local function _findEmptyActionBar()
+  for bar=1,10 do
+    local free, text = _isBarFree(bar)
+    if free == true then
+      print("Using Bar: ",bar)
+      return bar
+    end
+  end
+  return nil
+end
+local function _enableQuestBar()
+  questBar = true
+
+  questBarId = _findEmptyActionBar()
+  if questBarId == nil then
+    print("No Free Bar for Quest Items :()")
+  end
+  _searchBagsForQuestItems()
+end
+
+
 
 local function equipItem(link)
-
   itemType = select(9, GetItemInfo(link))
+  if (_isArtifact(itemEquipLocMap[itemType])) then
+    print("Replacing Artifact -- This one is up to you, too lazy to write the special cases. :P Suggest replacing with ",link)
+    return
+  end
   if (itemEquipLocMap[itemType] == "SecondaryHandSlot") then
     --Check if we can create an upgrade by equipping a wep+new off
     secondaryIlevel = _getItemLevel("player", "SecondaryHandSlot")
@@ -318,46 +387,122 @@ local function equipItem(link)
       EquipItemByName(link)
     end
   else
-    EquipItemByName(link)
+    if keepSetsLegosTill115 == true then
+      if UnitLevel("player") < 116 then
+        if itemType == "INVTYPE_FINGER" then
+          if _isLego("Finger0Slot") or _isLego("Finger1Slot") then
+            local level1 = _getItemLevel("player", "Finger0Slot")
+            local level2 = _getItemLevel("player", "Finger1Slot")
+            if level1 <= level2 then
+              if isLego("Finger0Slot") then
+                return;
+              end
+              EquipItemByName(link)
+              return
+            else
+              if isLego("Finger1Slot") then
+                return;
+              end
+              EquipItemByName(link)
+              return
+            end
+          end
+          return
+        end
+        if itemType == "INVTYPE_TRINKET" then
+          if _isLego("Trinket0Slot") or _isLego("Trinket1Slot") then
+            local level1 = _getItemLevel("player", "Trinket0Slot")
+            local level2 = _getItemLevel("player", "Trinket1Slot")
+            if level1 <= level2 then
+              if isLego("Trinket0Slot") then
+                return;
+              end
+              EquipItemByName(link)
+              return
+            else
+              if isLego("Trinket1Slot") then
+                return;
+              end
+              EquipItemByName(link)
+              return
+            end
+          end
+          return
+        end
+        if _isLego(itemEquipLocMap[itemType]) or _isTier("player", itemEquipLocMap[itemType]) then
+          return
+        else
+          EquipItemByName(link)
+        end
+      else
+        EquipItemByName(link)
+      end
+    else
+      EquipItemByName(link)
+    end
   end
 end
 
+--Called 5 seconds after quest is done, redundant equip attempt incase first failed
+local function _equipItemList()
+  for i=#backupEquip,1,-1 do
+    equipItem(backupEquip[i])
+  end
+end
 
-local function _isBarFree(bar)
-  for slot=1,12 do
-    local actionTex = GetActionTexture((bar-1)*12+slot)
-    if actionTex then
-      local global_id = select(2,GetActionInfo((bar-1)*12+slot))
-      local type = select(1,GetActionInfo((bar-1)*12+slot))
-      if type ~= "item" then
-        local spellName = GetSpellInfo(global_id)
-        return false,  spellName
+local function tryEquipItems()
+  if #toEquip > 0 then
+    if InCombatLockdown() == true then
+      equipAfterCombat = true
+      return
+    else
+
+      for i=#toEquip,1,-1 do
+        print("Equipping: ",toEquip[i])
+        --checkGearChange = true
+        equipItem(toEquip[i])
+        table.remove(toEquip, i)
       end
     end
   end
-  return true, nil
 end
-local function _findEmptyActionBar()
-  for bar=1,10 do
-    local free, text = _isBarFree(bar)
-    if free == true then
-      print("Using Bar: ",bar)
-      return bar
+function addEquip(item)
+  table.insert(toEquip, item)
+end
+
+
+function _replaceTeirWithBagItems()
+  for _,v in pairs(itemEquipLocMap) do
+
+    --invItemLink = GetInventoryItemLink("player", GetInventorySlotInfo( itemEquipLocMap[itemType] ))
+    local item = GetInventoryItemLink("player", GetInventorySlotInfo( v ))
+
+    if _isLego(v) then
+      local itemLevel = _getItemLevelLink(item)
+      if v == "Finger1Slot" then
+        v = "Finger0Slot"
+      end
+      if v == "Trinket1Slot" then
+        v = "Trinket0Slot"
+      end
+      local bagItemLevel, bestBagItem = _bestItemForSlot(v)
+      if bagItemLevel > itemLevel then
+        addEquip(bestBagItem)
+        tryEquipItems()
+      end
     end
   end
-  return nil
 end
-
-
 local f = CreateFrame("Frame", nil);
 f:RegisterEvent("ADDON_LOADED")
 f:SetScript("OnEvent", function(self, event, arg1)
   if arg1 == "BFAssist" then
     print("BFAssist is Loaded!")
-
-    questBarId = _findEmptyActionBar()
-    if questBarId == nil then
-      print("No Free Bar for Quest Items :()")
+    if questBar == true then
+      questBarId = _findEmptyActionBar()
+      if questBarId == nil then
+        print("No Free Bar for Quest Items :()")
+      end
     end
     _searchBagsForQuestItems()
     if bfaOn == false then
@@ -384,6 +529,16 @@ local function _updateQuestItemBar()
 end
 
 
+local frame_HandleLevelUp = CreateFrame("Frame")
+frame_HandleLevelUp:RegisterEvent("PLAYER_LEVEL_UP")
+frame_HandleLevelUp:SetScript("OnEvent", function(self, event, newLevel)
+  print("Grats on ",newLevel)
+  if (newLevel == 116) then
+    if keepSetsLegosTill115 then
+      _replaceTierWithBagItems()
+    end
+  end
+end)
 
 local frame_HandleItemPush = CreateFrame("Frame")
 frame_HandleItemPush:RegisterEvent("ITEM_PUSH")
@@ -456,32 +611,7 @@ frame_HandleEquipItems:SetScript("OnEvent", function(self, event, ...)
   end
 end)
 
---Called 5 seconds after quest is done, redundant equip attempt incase first failed
-local function _equipItemList()
-  for i=#backupEquip,1,-1 do
-    equipItem(backupEquip[i])
-  end
-end
 
-local function tryEquipItems()
-  if #toEquip > 0 then
-    if InCombatLockdown() == true then
-      equipAfterCombat = true
-      return
-    else
-
-      for i=#toEquip,1,-1 do
-        print("Equipping: ",toEquip[i])
-        --checkGearChange = true
-        equipItem(toEquip[i])
-        table.remove(toEquip, i)
-      end
-    end
-  end
-end
-function addEquip(item)
-  table.insert(toEquip, item)
-end
 
 
 --Quest Detail, Accept Quest Page
@@ -524,7 +654,8 @@ end)
 local frame_HandleGossipShow = CreateFrame("Frame");
 frame_HandleGossipShow:RegisterEvent("GOSSIP_SHOW")
 
-frame_HandleGossipShow:SetScript("OnEvent", function(self, event, ...)
+frame_HandleGossipShow:SetScript("OnEvent", function(self, event, arg1,...)
+
   --Accept All Quests
   availCount = GetNumGossipAvailableQuests();
   if availCount > 0 then
@@ -553,10 +684,37 @@ frame_HandleGossipShow:SetScript("OnEvent", function(self, event, ...)
     return
   end
 
-
+  local name, _ = UnitName("target")
+  if name == "Meerah" then
+    return
+  end
   gossip = GetNumGossipOptions()
   if gossip == 1 then
     SelectGossipOption(1)
+  end
+  if gossip > 1 then
+    local gossipText = GetGossipText()
+    if strmatch(gossipText, "What do you seek?") then
+      SelectGossipOption(3)
+      return
+    end
+    if strmatch(gossipText, "What is the lesson of the leaping tiger?") then
+      SelectGossipOption(5)
+      return
+    end
+    if strmatch(gossipText, "What is the source of power?") then
+      SelectGossipOption(1)
+      return
+    end
+    if strmatch(gossipText, "What is a life well") then
+      SelectGossipOption(4)
+      return
+    end
+    if strmatch(gossipText, "What do those with vision see?") then
+      SelectGossipOption(2)
+      return
+    end
+
   end
 
   --Do RP Dialog
@@ -858,7 +1016,7 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
           print("Replacing 2 tier peices.")
           table.insert(toEquip, firstItem)
           table.insert(toEquip, secondItem)
-          backupEquip = {table.unpack(toEquip)}
+          backupEquip = {unpack(toEquip)}
           print("Equipping: ",firstItem," and ",secondItem)
           --EquipItemByName(firstItem)
           --EquipItemByName(secondItem)
@@ -879,7 +1037,9 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
     if (isWeapon) then
       print("Probably equipping: ",itemLink)
       table.insert(toEquip, itemLink)
-      backupEquip = {table.unpack(toEquip)}
+
+      backupEquip = {unpack(toEquip)}
+
       if (turnIn == true) then
         GetQuestReward(bestOption)
       end
@@ -889,7 +1049,7 @@ frame_HandleQuestComplete:SetScript("OnEvent", function(self, event, ...)
     end
     print("Equipping: ",itemLink)
     table.insert(toEquip, itemLink)
-    backupEquip = {table.unpack(toEquip)}
+    backupEquip = {unpack(toEquip)}
     if (turnIn == true) then
       GetQuestReward(bestOption)
     end
